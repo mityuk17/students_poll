@@ -194,8 +194,8 @@ async def setup(client : Client, message: types.Message):
         else:
             await message.reply('Неверный формат команды. Команда должна выглядеть так: \"/setup время_проведения_опроса(в часах)\"')
 db.create_main_table()
-scheduler.add_job(poll_finished, 'interval',hours = 1)
+scheduler.add_job(poll_finished, 'interval',hour = 1)
 scheduler.add_job(start_polls, 'cron', day = 25, hour = 9)
-scheduler.add_job(notificate_users, 'interval', minutes=3)
+scheduler.add_job(notificate_users, 'interval', hour=1)
 scheduler.start()
 app.run()
