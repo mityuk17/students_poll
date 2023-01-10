@@ -1,7 +1,13 @@
 import datetime
 import logging
-import time
+
+import pyrogram.errors.exceptions.bad_request_400
+
 import db
+import draw_pie
+import openpyxl
+import os
+from draw_pie import draw
 import gspread
 from pyrogram import Client, filters, types
 from questions import questions, answer_variant
@@ -75,7 +81,23 @@ async def poll_finished():
 async def make_conclusion(chat_id):
     response = db.get_response(chat_id=chat_id)
     db.change_status(chat_id=chat_id,status=0)
-    await app.send_message(chat_id=chat_id,text=str(response))
+    draw_pie.draw(data = response, chat_id=chat_id)
+    if os.path.exists(f'responses/{chat_id}.xlsx'):
+        os.remove(f'responses/{chat_id}.xlsx')
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    for row in response:
+        ws.append(row)
+    wb.save(f'responses/{chat_id}.xlsx')
+    for i in range(len(response)):
+        for q in range(len(response[i])):
+            response[i][q] = str(response[i][q])
+        response[i] = ' :: '.join(response[i])
+    response = '\n'.join(response)
+    author_id = db.get_author_id(chat_id=chat_id)
+    await app.send_message(chat_id=author_id,text=response)
+    await app.send_photo(chat_id=author_id, photo=f'plots/{chat_id}.png')
+    await app.send_document(chat_id=author_id,document=f'responses/{chat_id}.xlsx', caption='Отчёт по опросу в формате .xlsx')
 # def check_existing_sheet(sheet_name):
 #     sh = gc.open_by_url(table_url)
 #     worksheet_list = sh.worksheets()
@@ -137,11 +159,13 @@ async def notificate_users():
     for user in users:
         await send_poll_notification(user[0], user[1])
 async def send_poll_notification(chat_id, user_id):
-
     chat = await app.get_chat(chat_id)
     kb = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text='Перейти к прохождению опроса', callback_data=f'get_question={str(chat_id)}')]])
-
-    await app.send_message(chat_id=user_id, text=f'В группе {chat.title} проводится опрос', reply_markup=kb)
+    try:
+        await app.send_message(chat_id=user_id, text=f'В группе {chat.title} проводится опрос', reply_markup=kb)
+        return True
+    except pyrogram.errors.exceptions.bad_request_400.PeerIdInvalid:
+        return False
 
 @app.on_callback_query()
 async def get_query(client: Client, callback_query: types.CallbackQuery):
@@ -187,15 +211,15 @@ async def setup(client : Client, message: types.Message):
                         chat_members.append([member.user.id, member.user.username])
                 db.add_chat(chat_id=message.chat.id,chat_title=message.chat.title,creator_id=message.from_user.id, deadline=int(deadline))
                 db.create_poll_table(chat_id=message.chat.id, members=chat_members)
-                scheduler.add_job(sheet_expired, args=[message.chat.id], trigger='date', run_date =datetime.datetime.now()+datetime.timedelta(hours=int(deadline)))
+                scheduler.add_job(sheet_expired, args=[message.chat.id], trigger='date', run_date =datetime.datetime.now()+datetime.timedelta(minutes=int(deadline)))
                 await message.reply(f'Успешно было запущено проведение опросов в этой группе. Время проведения опросов(в часах): {message.text.split()[-1]}')
             else:
                 await message.reply('Введённый параметр не является числом.')
         else:
             await message.reply('Неверный формат команды. Команда должна выглядеть так: \"/setup время_проведения_опроса(в часах)\"')
 db.create_main_table()
-scheduler.add_job(poll_finished, 'interval',hour = 1)
-scheduler.add_job(start_polls, 'cron', day = 25, hour = 9)
-scheduler.add_job(notificate_users, 'interval', hour=1)
+scheduler.add_job(poll_finished, 'interval',minutes = 3)
+scheduler.add_job(start_polls, 'cron', minute = 24)
+scheduler.add_job(notificate_users, 'interval', minutes = 1)
 scheduler.start()
 app.run()

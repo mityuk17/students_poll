@@ -27,8 +27,7 @@ def create_poll_table(chat_id : int, members:list):
     question_7 INT DEFAULT 0,
     question_8 INT DEFAULT 0,
     question_9 INT DEFAULT 0,
-    question_10 INT DEFAULT 0,
-    Y INT DEFAULT 0);'''
+    question_10 INT DEFAULT 0);'''
     conn = get_conn()
     conn.cursor().execute(query)
     conn.commit()
@@ -53,6 +52,11 @@ def check_existing_sheet(chat_id:int):
         return True
     else:
         return False
+def get_author_id(chat_id: int):
+    query = f'''SELECT creator_id FROM poll_groups WHERE chat_id = {chat_id}'''
+    conn = get_conn()
+    data = conn.cursor().execute(query).fetchall()
+    return data[0][0]
 def check_full_done(chat_id:int):
     query = f'''SELECT questions_answered FROM '{chat_id}';'''
     conn = get_conn()
@@ -114,7 +118,10 @@ def get_response(chat_id: int):
     conn = get_conn()
     data = conn.cursor().execute(query).fetchall()
     for i in range(len(data)):
-        Y = sum(data[i][3:13])/data[i][2]
+        if data[i][2] == 0:
+            Y = 0
+        else:
+            Y = sum(data[i][3:13])/data[i][2]
         data[i] = list(data[i]) + [Y]
         if Y >= 3:
             data[i].append('Высокая удовлетворённость')
@@ -122,4 +129,7 @@ def get_response(chat_id: int):
             data[i].append('Средняя удовлетворённость')
         else:
             data[i].append('Низкая удовлетворённсть')
+    data = [['id пользователя', 'username пользователя', 'На вопросов отвечено', 'Вопрос 1', 'Вопрос 2',
+             'Вопрос 3', 'Вопрос 4', 'Вопрос 5', 'Вопрос 6', 'Вопрос 7', 'Вопрос 8', 'Вопрос 9',
+             'Вопрос 10', 'У', 'Уровень удовлетворённости']] + data
     return data
