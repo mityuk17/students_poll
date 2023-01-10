@@ -12,16 +12,18 @@ import gspread
 from pyrogram import Client, filters, types
 from questions import questions, answer_variant
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
+from apscheduler.executors.pool import ThreadPoolExecutor, ProcessPoolExecutor
 logging.basicConfig(level=logging.INFO)
 api_id = 9411854
 api_hash = '499c76606cefdeadd4b1ece84a5a9932'
-API_TOKEN = '1817474310:AAFd3zZ0KF6_GdsBqgy-I1QtdyvCDGO7d5Y'
+API_TOKEN = '5744191683:AAE3QoqGK-mf9LMFGeaLDMqDBlhlskp7R-I'
 app = Client('bot', bot_token= API_TOKEN, api_id= api_id, api_hash= api_hash)
-gc = gspread.service_account('credentials.json')
-email = 'proektnya.pochta@gmail.com'
-table_url = 'https://docs.google.com/spreadsheets/d/1PWRXWUcxjPZHiw6BBm4dJrUR_Mk5gCIp2bJDPXN5IQI/edit#gid=376448824'
-sh = gc.open_by_url(table_url)
-scheduler = AsyncIOScheduler()
+
+job_defaults = {
+    'coalesce': False,
+    'max_instances': 30
+}
+scheduler = AsyncIOScheduler(job_defaults=job_defaults)
 def get_answer_kb(chat_id):
     answer_kb = types.InlineKeyboardMarkup(inline_keyboard=[
     [types.InlineKeyboardButton(text=answer_variant[0], callback_data=f'answer=0={chat_id}')],
@@ -82,6 +84,8 @@ async def make_conclusion(chat_id):
     response = db.get_response(chat_id=chat_id)
     db.change_status(chat_id=chat_id,status=0)
     draw_pie.draw(data = response, chat_id=chat_id)
+    if not os.path.exists('responses'):
+        os.mkdir('responses')
     if os.path.exists(f'responses/{chat_id}.xlsx'):
         os.remove(f'responses/{chat_id}.xlsx')
     wb = openpyxl.Workbook()
@@ -89,15 +93,13 @@ async def make_conclusion(chat_id):
     for row in response:
         ws.append(row)
     wb.save(f'responses/{chat_id}.xlsx')
-    for i in range(len(response)):
-        for q in range(len(response[i])):
-            response[i][q] = str(response[i][q])
-        response[i] = ' :: '.join(response[i])
-    response = '\n'.join(response)
     author_id = db.get_author_id(chat_id=chat_id)
-    await app.send_message(chat_id=author_id,text=response)
+    await app.send_message(chat_id=author_id,text=f'''Опрос в группе {chat_id} проведён
+Людей опрошено: {len(response)-1}
+Людей ответило на все вопросы: {len([i for i in response if i[2]==10])}''')
     await app.send_photo(chat_id=author_id, photo=f'plots/{chat_id}.png')
     await app.send_document(chat_id=author_id,document=f'responses/{chat_id}.xlsx', caption='Отчёт по опросу в формате .xlsx')
+    os.remove(f'plots/{chat_id}.png')
 # def check_existing_sheet(sheet_name):
 #     sh = gc.open_by_url(table_url)
 #     worksheet_list = sh.worksheets()
@@ -156,15 +158,21 @@ async def start_polls():
         db.new_poll(chat_id = poll[0], members=chat_members)
 async def notificate_users():
     users = db.get_users_for_notification()
+    print(users)
     for user in users:
+        chat = await app.get_chat(chat_id=user[0])
         await send_poll_notification(user[0], user[1])
 async def send_poll_notification(chat_id, user_id):
     chat = await app.get_chat(chat_id)
     kb = types.InlineKeyboardMarkup(inline_keyboard=[[types.InlineKeyboardButton(text='Перейти к прохождению опроса', callback_data=f'get_question={str(chat_id)}')]])
     try:
         await app.send_message(chat_id=user_id, text=f'В группе {chat.title} проводится опрос', reply_markup=kb)
-        return True
+        print(True, user_id)
     except pyrogram.errors.exceptions.bad_request_400.PeerIdInvalid:
+        print(1)
+        return False
+    except pyrogram.errors.exceptions.bad_request_400.InputUserDeactivated:
+        print(2)
         return False
 
 @app.on_callback_query()
@@ -173,7 +181,7 @@ async def get_query(client: Client, callback_query: types.CallbackQuery):
         chat_id = int(callback_query.data.split('=')[-1])
         user_id = callback_query.message.chat.id
         question = db.get_user_current_question(chat_id,user_id)
-        await app.delete_messages(chat_id=user_id, message_ids=callback_query.message.id)
+        #await app.delete_messages(chat_id=user_id, message_ids=callback_query.message.id)
         if question >= 10:
             await app.send_message(chat_id=user_id, text='Вы прошли опрос, спасибо.')
             return True
@@ -185,7 +193,7 @@ async def get_query(client: Client, callback_query: types.CallbackQuery):
         answer_variant =int(callback_query.data.split('=')[1])
         question_num = db.get_user_current_question(chat_id=chat_id, user_id=user_id)
         db.write_answer(chat_id=chat_id,user_id= user_id,question_number=question_num+1, answer=answer_variant)
-        await app.delete_messages(chat_id=user_id , message_ids=callback_query.message.id)
+        #await app.delete_messages(chat_id=user_id , message_ids=callback_query.message.id)
         if question_num >= 9:
             await app.send_message(chat_id=user_id , text='Вы прошли опрос, спасибо.')
             return True
@@ -211,15 +219,16 @@ async def setup(client : Client, message: types.Message):
                         chat_members.append([member.user.id, member.user.username])
                 db.add_chat(chat_id=message.chat.id,chat_title=message.chat.title,creator_id=message.from_user.id, deadline=int(deadline))
                 db.create_poll_table(chat_id=message.chat.id, members=chat_members)
-                scheduler.add_job(sheet_expired, args=[message.chat.id], trigger='date', run_date =datetime.datetime.now()+datetime.timedelta(minutes=int(deadline)))
-                await message.reply(f'Успешно было запущено проведение опросов в этой группе. Время проведения опросов(в часах): {message.text.split()[-1]}')
+                scheduler.add_job(sheet_expired, args=[message.chat.id], trigger='date', run_date =datetime.datetime.now()+datetime.timedelta(hours=int(deadline)))
+                await message.reply(f'Успешно было запущено проведение опросов в этой группе. Время проведения опросов(в часах): {message.text.split()[-1]}\nЧтобы бот мог отправить вам сообщение с опросом перейдите по ссылке и нажмите кнопку Начать\nhttps://t.me/ContentedStudentBot?start')
             else:
                 await message.reply('Введённый параметр не является числом.')
         else:
             await message.reply('Неверный формат команды. Команда должна выглядеть так: \"/setup время_проведения_опроса(в часах)\"')
 db.create_main_table()
-scheduler.add_job(poll_finished, 'interval',minutes = 3)
-scheduler.add_job(start_polls, 'cron', minute = 24)
-scheduler.add_job(notificate_users, 'interval', minutes = 1)
+db.change_status(chat_id=-847957314, status=1)
+scheduler.add_job(poll_finished, 'interval',minutes =1)
+scheduler.add_job(start_polls, 'cron', minute = 30)
+scheduler.add_job(notificate_users, 'interval', minutes = 3)
 scheduler.start()
 app.run()
