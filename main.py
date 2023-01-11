@@ -37,6 +37,11 @@ async def sheet_expired(chat_id):
     if db.get_status(chat_id=chat_id) == 0:
         return True
     await make_conclusion(chat_id)
+async def poll_expired():
+    polls = db.get_active_polls()
+    for poll in polls:
+        if db.check_expired_poll(poll[0]):
+            await make_conclusion(poll[0])
 async def poll_finished():
     polls = db.get_active_polls()
     for poll in polls:
@@ -94,10 +99,14 @@ async def make_conclusion(chat_id):
         ws.append(row)
     wb.save(f'responses/{chat_id}.xlsx')
     author_id = db.get_author_id(chat_id=chat_id)
-    await app.send_message(chat_id=author_id,text=f'''Опрос в группе {chat_id} проведён
+    draw_pie.draw2(data=db.get_history_response(chat_id=chat_id),chat_id=chat_id)
+    chat = await app.get_chat(chat_id=chat_id)
+    print(response)
+    await app.send_message(chat_id=author_id,text=f'''Опрос в группе {chat.title} проведён
 Людей опрошено: {len(response)-1}
 Людей ответило на все вопросы: {len([i for i in response if i[2]==10])}''')
-    await app.send_photo(chat_id=author_id, photo=f'plots/{chat_id}.png')
+    await app.send_photo(chat_id=author_id, photo=f'plots/pie_{chat_id}.png')
+    await app.send_photo(chat_id=author_id, photo=f'plots/bar_{chat_id}.png')
     await app.send_document(chat_id=author_id,document=f'responses/{chat_id}.xlsx', caption='Отчёт по опросу в формате .xlsx')
     os.remove(f'plots/{chat_id}.png')
 # def check_existing_sheet(sheet_name):
@@ -212,21 +221,21 @@ async def setup(client : Client, message: types.Message):
         if len(message.text.split()) == 2:
             deadline = message.text.split()[-1]
             if deadline.isdigit():
-
                 chat_members = list()
                 async for member in app.get_chat_members(message.chat.id):
                     if not member.user.is_bot:
-                        chat_members.append([member.user.id, member.user.username])
+                        if member.user.id != message.from_user.id:
+                            chat_members.append([member.user.id, member.user.username])
                 db.add_chat(chat_id=message.chat.id,chat_title=message.chat.title,creator_id=message.from_user.id, deadline=int(deadline))
                 db.create_poll_table(chat_id=message.chat.id, members=chat_members)
-                scheduler.add_job(sheet_expired, args=[message.chat.id], trigger='date', run_date =datetime.datetime.now()+datetime.timedelta(hours=int(deadline)))
+                #scheduler.add_job(sheet_expired, args=[message.chat.id], trigger='date', run_date =datetime.datetime.now()+datetime.timedelta(hours=int(deadline)))
                 await message.reply(f'Успешно было запущено проведение опросов в этой группе. Время проведения опросов(в часах): {message.text.split()[-1]}\nЧтобы бот мог отправить вам сообщение с опросом перейдите по ссылке и нажмите кнопку Начать\nhttps://t.me/ContentedStudentBot?start')
             else:
                 await message.reply('Введённый параметр не является числом.')
         else:
             await message.reply('Неверный формат команды. Команда должна выглядеть так: \"/setup время_проведения_опроса(в часах)\"')
 db.create_main_table()
-db.change_status(chat_id=-847957314, status=1)
+scheduler.add_job(poll_expired, 'interval', minutes = 5)
 scheduler.add_job(poll_finished, 'interval',minutes =1)
 scheduler.add_job(start_polls, 'cron', minute = 30)
 scheduler.add_job(notificate_users, 'interval', minutes = 3)
