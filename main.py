@@ -14,9 +14,9 @@ from questions import questions, answer_variant
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.executors.pool import ThreadPoolExecutor, ProcessPoolExecutor
 logging.basicConfig(level=logging.INFO)
-api_id = 9411854
-api_hash = '499c76606cefdeadd4b1ece84a5a9932'
-API_TOKEN = '5744191683:AAE3QoqGK-mf9LMFGeaLDMqDBlhlskp7R-I'
+api_id = 0
+api_hash = ''
+API_TOKEN = ''
 app = Client('bot', bot_token= API_TOKEN, api_id= api_id, api_hash= api_hash)
 
 job_defaults = {
